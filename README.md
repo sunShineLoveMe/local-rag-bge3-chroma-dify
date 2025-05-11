@@ -20,6 +20,47 @@
 6. 支持与Dify平台集成，作为外部知识库使用
 7. 提供Web界面进行API测试
 
+## 自动化召回测试
+
+本项目支持基于标准化测试集的自动化召回率评估，帮助用户快速了解知识库检索效果。
+
+### 功能说明
+- 自动读取 test_case_dataset/标准.md 中的所有问题和黄金答案
+- 自动调用 /search API，统计Top1/Top3/Top5召回命中率
+- 输出详细测试报告和csv结果文件，便于分析和持续优化
+
+### 使用方法
+
+1. 启动 FastAPI 检索服务（确保已完成文档向量化和服务运行）
+
+```bash
+uvicorn main:app --reload --port 8001
+```
+
+2. 运行自动化召回测试脚本
+
+```bash
+python test_case_dataset/auto_recall_eval.py
+```
+
+3. 结果说明
+- 终端会输出每个问题的Top1/Top3/Top5命中情况和整体召回率
+- 详细结果保存在 test_case_dataset/auto_recall_eval_result.csv
+
+### 参数说明
+- 测试用例来源：test_case_dataset/标准.md
+- 检索API地址：默认 http://localhost:8001/search，可在脚本中修改
+- TopK设置：默认统计Top1/Top3/Top5
+
+### 结果解读
+- Top1_hit/Top3_hit/Top5_hit：表示黄金答案是否在前K条检索结果中出现
+- 召回率=命中数/总数，越高说明知识库检索效果越好
+
+### 改进建议
+- 若召回率较低，可优化分块策略、embedding模型或数据质量
+- 可扩展更多测试用例，完善标准.md
+- 支持自定义召回阈值、API地址等参数
+
 ## 安装与使用
 
 ### 环境要求
