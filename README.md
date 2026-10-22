@@ -1,228 +1,143 @@
-# 本地RAG知识库系统
+# 本地 RAG 知识库 × Dify
+**Local Retrieval API with Ollama, BGE-M3 and Chroma**
 
-这是一个基于BGE-M3嵌入模型和Chroma向量数据库的本地RAG（检索增强生成）知识库系统。该系统可以将PDF和Excel文档转换为向量数据，并提供语义搜索功能,内部支持Dify外部知识库API。
+把本地 PDF、Excel 转成可检索的知识片段，通过 FastAPI 提供搜索接口，并接入 Dify 的外部知识库。
 
-## 项目结构
+这是一个**文档入库与向量检索示例**：本仓库负责返回相关片段，回答生成由 Dify 或其他调用方完成，不需要在这里部署聊天大模型。
 
-- `main.py`: FastAPI服务器，提供搜索API和Dify外部知识库接口
-- `ingest.py`: 文档处理脚本，用于将文档转换为向量并存储在Chroma数据库中
-- `embeddings.py`: 自定义的Ollama嵌入模型实现
-- `data/`: 存放要处理的文档（PDF、Excel）
-- `chroma_db/`: Chroma向量数据库存储目录
+[快速开始](#快速开始) · [调用接口](#调用接口) · [接入 Dify](#接入-dify) · [当前边界](#当前边界)
 
-## 功能特点
+## 工作原理
 
-1. 支持PDF和Excel文档的处理
-2. 使用BGE-M3嵌入模型生成高质量向量表示
-3. 基于Chroma的高效向量存储和检索
-4. 提供RESTful API进行语义搜索
-5. 完全本地部署，无需依赖云服务
-6. 支持与Dify平台集成，作为外部知识库使用
-7. 提供Web界面进行API测试
+~~~mermaid
+flowchart LR
+    A["PDF / Excel"] --> B["加载与分块"]
+    B --> C["Ollama BGE-M3"]
+    C --> D["本地 Chroma"]
+    E["查询文本"] --> F["FastAPI"]
+    F <--> D
+    F --> G["搜索页面 / Dify"]
+~~~
 
-## 自动化召回测试
+- 文档按 512 字符分块，重叠 64 字符。
+- BGE-M3 通过本机 Ollama 接口生成向量。
+- Chroma 将向量持久化到 chroma_db/。
+- /search 用于直接检索；/retrieval 返回 Dify 所需的 records 格式。
 
-本项目支持基于标准化测试集的自动化召回率评估，帮助用户快速了解知识库检索效果。
+## 快速开始
 
-### 功能说明
-- 自动读取 test_case_dataset/标准.md 中的所有问题和黄金答案
-- 自动调用 /search API，统计Top1/Top3/Top5召回命中率
-- 输出详细测试报告和csv结果文件，便于分析和持续优化
+建议使用 **Python 3.11** 和独立虚拟环境。仓库沿用 Chroma 0.4.22 的历史依赖组合，避免直接使用系统 Python 或 NumPy 2 环境。
 
-### 使用方法
+### 1. 安装依赖
 
-1. 启动 FastAPI 检索服务（确保已完成文档向量化和服务运行）
+~~~bash
+git clone https://github.com/sunShineLoveMe/local-rag-bge3-chroma-dify.git
+cd local-rag-bge3-chroma-dify
 
-```bash
-uvicorn main:app --reload --port 8001
-```
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt "numpy<2" pypdf
+~~~
 
-2. 运行自动化召回测试脚本
+PDF 加载器使用 pypdf；它与 requirements.txt 中列出的 PyPDF2 是不同的包，因此上面的命令显式补装 pypdf。Excel 解析使用 Unstructured。
 
-```bash
-python test_case_dataset/auto_recall_eval.py
-```
+### 2. 准备 Ollama 嵌入模型
 
-3. 结果说明
-- 终端会输出每个问题的Top1/Top3/Top5命中情况和整体召回率
-- 详细结果保存在 test_case_dataset/auto_recall_eval_result.csv
+先安装并启动 Ollama；尚未运行服务时，可在另一个终端执行 ollama serve。
 
-### 参数说明
-- 测试用例来源：test_case_dataset/标准.md
-- 检索API地址：默认 http://localhost:8001/search，可在脚本中修改
-- TopK设置：默认统计Top1/Top3/Top5
+~~~bash
+ollama pull bge-m3
+curl -fsS http://127.0.0.1:11434/api/tags
+~~~
 
-### 结果解读
-- Top1_hit/Top3_hit/Top5_hit：表示黄金答案是否在前K条检索结果中出现
-- 召回率=命中数/总数，越高说明知识库检索效果越好
+首次 pull 会下载模型。代码默认使用 **bge-m3:latest** 和 **http://localhost:11434**，修改入口在 [embeddings.py](embeddings.py)。
 
-### 改进建议
-- 若召回率较低，可优化分块策略、embedding模型或数据质量
-- 可扩展更多测试用例，完善标准.md
-- 支持自定义召回阈值、API地址等参数
+### 3. 放入文档并入库
 
-## 安装与使用
+将至少一份 PDF、.xlsx 或 .xls 文件放入 data/。该目录只保留待导入文档；移除仓库自带的空占位文件，避免导入脚本将它识别为不支持的格式：
 
-### 环境要求
-
-- Python 3.8+
-- Ollama服务（需要安装bge-m3模型）
-
-### 安装依赖
-
-```bash
-pip install -r requirements.txt
-```
-
-### 准备数据
-
-1. 将需要处理的PDF和Excel文档放在`data/`目录下
-
-### 处理文档
-
-```bash
+~~~bash
+rm -f data/.gitkeep
 python ingest.py
-```
+~~~
 
-### 启动搜索服务
+第一次体验建议使用可复制文本的小型 PDF。重复运行 ingest.py 会继续追加片段，当前没有文件去重或增量更新机制。
 
-```bash
-uvicorn main:app --reload --port 8001
-```
+### 4. 启动 API
 
-> **注意**: 如果端口8000已被占用，可以使用`--port`参数指定其他端口，如8001
+~~~bash
+python -m uvicorn main:app --host 127.0.0.1 --port 8001
+~~~
 
-## API使用说明
+打开：
 
-### Web测试界面
+- **http://127.0.0.1:8001/**：内置搜索与 Dify 接口测试页面。
+- **http://127.0.0.1:8001/docs**：FastAPI 交互文档。
 
-访问 http://localhost:8001/ 可以打开Web测试界面，直接在浏览器中测试API功能。
+所有 Python 命令均在项目根目录执行，入库和服务才能使用同一个 chroma_db/。
 
-### 搜索API
+## 调用接口
 
-- **端点**: `/search`
-- **方法**: GET
-- **参数**:
-  - `query`: 搜索查询文本
-  - `k`: 返回结果数量（默认为5）
-- **返回**: 包含相关文档片段和相似度分数的JSON对象
+### 直接搜索
 
-### 示例请求
+~~~bash
+curl -G 'http://127.0.0.1:8001/search' \
+  --data-urlencode 'query=这里填写文档中能回答的问题' \
+  --data-urlencode 'k=3'
+~~~
 
-```
-GET /search?query=锂离子电池安全使用&k=3
-```
+响应包含 results，每条结果有 content 和 score。score 来自 Chroma 的原始检索分数，不是已经归一化的相关性百分比。
 
-### 示例响应
+### Dify 格式检索
 
-```json
-{
-  "results": [
-    {
-      "content": "锂离子电池安全使用注意事项...",
-      "score": 0.89
-    },
-    {
-      "content": "电池组安全操作规程...",
-      "score": 0.78
-    },
-    {
-      "content": "...",
-      "score": 0.65
-    }
-  ]
-}
-```
-
-## Dify外部知识库接入说明
-
-本系统已实现Dify外部知识库API规范，可以作为外部知识库与Dify平台集成。
-
-### 接口说明
-
-- **端点**: `/retrieval`
-- **方法**: POST
-- **请求头**:
-  - `Authorization`: Bearer {API_KEY}（目前版本未实际验证API Key）
-- **请求体**:
-  ```json
-  {
-    "knowledge_id": "your-knowledge-id",
-    "query": "你的问题",
+~~~bash
+curl -X POST 'http://127.0.0.1:8001/retrieval' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer local-demo-only' \
+  -d '{
+    "knowledge_id": "local-docs",
+    "query": "这里填写文档中能回答的问题",
     "retrieval_setting": {
-      "top_k": 5,
-      "score_threshold": 0.5
+      "top_k": 3,
+      "score_threshold": 0
     }
-  }
-  ```
-- **响应**:
-  ```json
-  {
-    "records": [
-      {
-        "metadata": {
-          "source": "data/example.pdf",
-          "page": 1
-        },
-        "score": 0.89,
-        "title": "example.pdf",
-        "content": "文档内容片段..."
-      }
-    ]
-  }
-  ```
+  }'
+~~~
 
-### 在Dify中配置步骤
+当前只检查 Authorization 的 Bearer 格式，**并未校验密钥值**；示例中的值仅用于本地调试。knowledge_id 目前也不隔离不同知识库，查询仍使用同一个 Chroma 存储。
 
-1. 在Dify平台中，进入"知识库"页面，点击右上角的"外部知识库API"
-2. 点击"添加外部知识库API"，填写以下信息：
-   - 知识库名称：自定义一个名称
-   - API接口地址：`http://localhost:8001/retrieval`（如果使用了不同端口，请相应修改）
-   - API Key：任意值（当前版本未验证）
-3. 点击"添加"完成API配置
-4. 返回知识库页面，点击"连接外部知识库"
-5. 填写知识库名称和描述，选择刚刚添加的外部知识库API
-6. 填写外部知识库ID（任意值，会作为knowledge_id参数传递）
-7. 调整召回设置（Top K和Score阈值）
-8. 点击"创建"完成配置
+## 接入 Dify
 
-## 注意事项
+1. 在 Dify 中添加外部知识库 API，API Endpoint 填 **http://127.0.0.1:8001**。Dify 会自动追加 /retrieval，不要在基础地址中重复填写该路径；见 [Dify 官方接入说明](https://github.com/langgenius/dify-docs/blob/main/en/self-host/use-dify/knowledge/connect-external-knowledge-base.mdx)。
+2. 本地调试时填写一个非空 API Key，并连接 knowledge_id 为 local-docs 的外部知识库。
+3. 使用与 /search 相同的问题，核对返回片段和来源，再接入问答流程。
 
-1. 确保Ollama服务已启动并加载了bge-m3模型
-2. 大文件处理可能需要较长时间
-3. 如遇到错误，请检查依赖版本兼容性
-4. 与Dify集成时，确保本地服务可以被Dify平台访问（如果Dify部署在云端，需要将本地服务暴露到公网）
-5. 如果启动服务时提示端口已被占用，请尝试使用其他端口
+**地址必须从 Dify 所在环境可达。** 如果 Dify 在 Docker 中，127.0.0.1 指向容器自身；需要配置可访问的宿主机地址。不要将当前未完成密钥验证的检索服务直接开放到公网。
 
-## 故障排除
+## 当前边界
 
-### 常见问题
+- 主要处理文本 PDF 与 Excel；扫描 PDF 没有内置 OCR 流程。
+- data/ 默认没有可用业务文档，启动服务不会自动导入数据。
+- /retrieval 当前按 score >= score_threshold 过滤，而 Chroma 返回的距离通常越小越近；阈值逻辑需校准，不能把 0.5 解读为“50% 相关”。建议先用 /search 检查召回。
+- 依赖未完整锁定，首次部署需要验证本机的 LangChain / Chroma / NumPy 组合。
 
-1. **Chroma版本兼容性问题**
-   - 确保使用chromadb==0.4.22版本
-   - 如遇数据库结构不匹配错误，请删除chroma_db目录并重新运行ingest.py
+## 目录与评估
 
-2. **导入错误**
-   - 确保使用langchain_community而非langchain进行导入
-   - 确保安装了langchain-text-splitters包
+| 文件或目录 | 用途 |
+| --- | --- |
+| embeddings.py | Ollama 嵌入接口 |
+| ingest.py | 文档加载、分块与入库 |
+| main.py | FastAPI、搜索和 Dify 接口 |
+| data/ | 待导入文档 |
+| chroma_db/ | 本地向量存储 |
+| test_case_dataset/ | 召回评估脚本与问题集 |
 
-3. **嵌入模型错误**
-   - 检查Ollama服务是否正常运行
-   - 确认bge-m3模型是否已正确安装
+服务运行且已导入对应材料后，可执行：
 
-4. **Dify连接问题**
-   - 确保API地址正确且可访问
-   - 检查请求和响应格式是否符合Dify规范
+~~~bash
+python test_case_dataset/auto_recall_eval.py
+~~~
 
-5. **端口占用问题**
-   - 如果8000端口被占用，使用`--port 8001`（或其他可用端口）启动服务
-   - 可以使用`lsof -i:端口号`命令查看占用端口的进程
+评估脚本针对仓库中的固定问题集；更换知识材料后，应同步调整问题和黄金答案，结果才有参考意义。
 
-## 未来改进计划
-
-1. 添加更完善的用户界面，方便查询和管理
-2. 支持更多文档格式（如Word、HTML等）
-3. 添加文档元数据管理功能
-4. 优化文本分块策略，提高检索质量
-5. 增加多语言支持
-6. 增强与Dify的集成，支持更多功能 
+当前仓库未提供独立 LICENSE 文件；复用或分发前请与维护者确认授权范围。
